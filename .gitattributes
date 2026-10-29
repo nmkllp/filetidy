@@ -1,0 +1,11 @@
+# 换行符：仓库里一律存 LF，工作区也检出 LF。
+# 不写这一行，Windows 上的 git（core.autocrlf=true）会在每次 add 时
+# 刷一堆 "LF will be replaced by CRLF" 的警告。
+* text=auto eol=lf
+
+# 二进制文件别做任何换行转换，否则文件会被改坏
+*.png  binary
+*.jpg  binary
+*.7z   binary
+*.zip  binary
+*.exe  binary

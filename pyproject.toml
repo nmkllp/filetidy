@@ -1,0 +1,31 @@
+[project]
+name = "filetidy"
+version = "0.1.0"
+description = "看清一个目录到底被什么占满了。只读，不删任何东西。"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "nmkllp" }]
+keywords = ["disk-usage", "duplicates", "cli", "windows"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+
+# 零依赖：只用标准库。这句话同时也是对用户的承诺。
+dependencies = []
+
+# 装完之后就能直接敲 `tidy`，不用再写 `py -m filetidy`
+[project.scripts]
+tidy = "filetidy.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# 只打包 filetidy 这一层。tests / tools / docs 都是开发用的，不该进 wheel。
+[tool.setuptools]
+packages = ["filetidy"]
+
+# 注意：version 上面写的是 0.1.0，filetidy/__init__.py 里也有一份。
+# 两个地方要一起改，否则 pip 装出来的版本号和代码里报的不一致。
