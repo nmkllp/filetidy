@@ -126,18 +126,6 @@ def child_totals(
     )
 
 
-def build_dir_totals(files: Sequence[FileEntry]) -> dict[str, tuple[int, int]]:
-    totals: dict[str, list[int]] = {}
-    for f in files:
-        key = str(f.path.parent)
-        bucket = totals.get(key)
-        if bucket is None:
-            bucket = totals[key] = [0, 0]
-        bucket[0] += f.size
-        bucket[1] += 1
-    return {key: (value[0], value[1]) for key, value in totals.items()}
-
-
 def dir_sizes(
     files: Sequence[FileEntry],
     root: Path,

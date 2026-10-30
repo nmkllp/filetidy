@@ -43,16 +43,34 @@ if (Test-Path dist) {
 $mode = if ($OneFile) { "--onefile" } else { "--onedir" }
 Write-Host "==> 开始打包（$mode），第一次会慢几分钟" -ForegroundColor Cyan
 
+# 只用 QtWidgets，这些模块一个都没 import。排掉能省下几十 MB。
+$excludes = @(
+    "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.QtQuickControls2",
+    "PySide6.QtPdf", "PySide6.QtPdfWidgets", "PySide6.QtNetwork", "PySide6.QtSql",
+    "PySide6.QtTest", "PySide6.QtXml", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets",
+    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
+    "PySide6.QtCharts", "PySide6.QtDataVisualization", "PySide6.QtOpenGL",
+    "PySide6.QtOpenGLWidgets", "PySide6.QtPrintSupport", "PySide6.QtDBus",
+    "PySide6.QtDesigner", "PySide6.QtUiTools", "PySide6.QtHelp",
+    "tkinter", "unittest", "pydoc", "doctest"
+)
+$excludeArgs = $excludes | ForEach-Object { "--exclude-module"; $_ }
+
+# 图标要给绝对路径：PyInstaller 按 --specpath 的目录解析相对路径
+$icon = Join-Path $PSScriptRoot "assets\filetidy.ico"
+
 py -m PyInstaller `
     --noconfirm `
     --clean `
     $mode `
     --windowed `
     --name filetidy `
+    --icon $icon `
     --paths . `
     --distpath dist `
     --workpath build `
     --specpath build `
+    @excludeArgs `
     tools\exe_entry.py
 
 if ($LASTEXITCODE -ne 0) { throw "打包失败，看上面的报错" }
@@ -68,6 +86,26 @@ if ($OneFile) {
 } else {
     $exe = Join-Path "dist\filetidy" "filetidy.exe"
     if (-not (Test-Path $exe)) { throw "没有生成 $exe" }
+
+    # 清掉用不到的 Qt 组件。--exclude-module 只挡 Python 模块，
+    # Qt 的 dll 是打包器按名字收集的，排不掉，只能在打包后删。
+    # 如果双击闪退，先把 opengl32sw.dll 从下面这条列表里去掉再打一次。
+    $drop = @(
+        "Qt6Quick.dll", "Qt6Qml.dll", "Qt6QmlModels.dll", "Qt6QmlWorkerScript.dll",
+        "Qt6QuickWidgets.dll", "Qt6QuickControls2.dll", "Qt6QuickControls2Impl.dll",
+        "Qt6Pdf.dll", "Qt6Network.dll", "Qt6Sql.dll", "Qt6Test.dll", "Qt6Xml.dll",
+        "Qt6OpenGL.dll", "Qt6OpenGLWidgets.dll", "Qt6Multimedia.dll",
+        "Qt6MultimediaWidgets.dll", "opengl32sw.dll"
+    )
+    $freed = 0
+    foreach ($name in $drop) {
+        $f = Join-Path "dist\filetidy\_internal\PySide6" $name
+        if (Test-Path $f) {
+            $freed += (Get-Item $f).Length
+            Remove-Item $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Host ("==> 清掉 {0:N1} MB 用不到的 Qt 组件" -f ($freed / 1MB)) -ForegroundColor Cyan
 
     $zip = Join-Path "dist" "filetidy-win64.zip"
     Write-Host "==> 正在压缩成 zip" -ForegroundColor Cyan
