@@ -1,6 +1,6 @@
 [project]
 name = "filetidy"
-version = "0.1.0"
+version = "1.0.1"
 description = "看清一个目录到底被什么占满了。只读，不删任何东西。"
 readme = "README.md"
 requires-python = ">=3.10"
