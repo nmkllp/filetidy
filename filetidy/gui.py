@@ -1,18 +1,3 @@
-"""图形界面（PySide6）。
-
-这个文件是整个项目里唯一 import PySide6 的地方，而且**只能被 `tidy gui` 延迟导入**。
-原因：CLI 那四个命令零依赖，不能因为 GUI 引入第三方包就让它们装不上。
-所以 cli.py 里是 `from .gui import main` 写在函数内部，不是模块顶层。
-
-结构上它和 cli.py 是平级的两张脸，共用同一套 core / fs：
-
-    cli.py  ─┐
-             ├─→ core.py ─→ models.py
-    gui.py  ─┘    fs.py
-
-界面本身不做任何计算：扫描在后台线程里跑，统计交给 core，这里只负责摆控件。
-"""
-
 from __future__ import annotations
 
 import sys
@@ -45,14 +30,6 @@ RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
 
 class ScanWorker(QThread):
-    """在后台线程里扫盘。
-
-    为什么必须有它：桌面 20 万个文件要扫 16 秒，C 盘要几分钟。如果在主线程里扫，
-    窗口会一直冻住——用户看到的是"程序没反应"，然后点叉。
-
-    线程和界面之间只通过信号通信。**不要在 worker 里碰任何控件**，
-    那是跨线程操作 UI，会随机崩溃，而且极难复现。
-    """
 
     progressed = Signal(int, int)  # 已扫文件数, 已扫目录数
     succeeded = Signal(object)  # RawScan
@@ -65,7 +42,6 @@ class ScanWorker(QThread):
         self._stop = False
 
     def cancel(self) -> None:
-        """请求停止。真正的停止发生在扫描循环下一次检查时，不会立刻中断。"""
         self._stop = True
 
     def run(self) -> None:  # 这个函数在**子线程**里执行
@@ -272,10 +248,6 @@ class MainWindow(QWidget):
             self._render_view()
 
     def _render_view(self) -> None:
-        """把当前目录这一层画出来。
-
-        只用扫描时记好的目录合计，不重新扫盘，也不逐文件重算。
-        """
         if self._raw is None or self._root is None:
             return
         stats = child_totals(self._raw.dir_totals, self._root)
@@ -296,11 +268,6 @@ class MainWindow(QWidget):
         skipped: int = 0,
         ignored: int = 0,
     ) -> None:
-        """接收一层的统计结果，画出来。
-
-        「收下数据」和「画出来」分成两步，是为了过滤能反复重画：
-        敲一个字就重画一次，但绝不需要重新扫盘。
-        """
         self._root = root
         self._stats = stats
         self._skipped = skipped
@@ -402,7 +369,6 @@ class MainWindow(QWidget):
         super().keyPressEvent(event)
 
     def scan_blocking(self, target: Path) -> None:
-        """同步扫描一次，不开线程。给自动化验证和截图用。"""
         self._on_scanned(scan(target))
 
 

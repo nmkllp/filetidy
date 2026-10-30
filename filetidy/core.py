@@ -1,15 +1,3 @@
-"""纯逻辑层：这里只有计算和判断，没有硬盘、没有屏幕、没有网络。
-
-这是整个项目里最值钱的一层。它的特点是：
-  输入 = 普通数据，输出 = 普通数据，同样的输入永远得到同样的输出。
-
-好处很实在 —— 因为它不碰任何外部东西，所以测试起来极其便宜：
-不用造临时目录，不用 mock，直接喂几个 FileEntry 进去看结果对不对。
-
-规矩：这个文件里不许出现 open()、print()、os.walk()、requests。
-一旦发现自己想写这些，说明那段代码该去 fs.py 或 cli.py。
-"""
-
 from __future__ import annotations
 
 import fnmatch
@@ -42,21 +30,12 @@ DEFAULT_IGNORED_DIRS: tuple[str, ...] = (
 
 
 def is_ignored(name: str, patterns: Sequence[str]) -> bool:
-    """这个目录名是否应该被跳过。
-
-    规则是 shell 通配符（`*` `?` `[abc]`），不是正则 —— 对人的友好度高得多，
-    `node_modules`、`*.tmp`、`build*` 这类写法符合直觉。
-
-    比较前两边都转小写：Windows 的文件系统本来就不区分大小写，
-    `Node_Modules` 和 `node_modules` 是同一个目录，规则不应该只认一种写法。
-    """
     lowered = name.lower()
     return any(fnmatch.fnmatchcase(lowered, pattern.lower()) for pattern in patterns)
 
 
 @dataclass(frozen=True)
 class ExtStat:
-    """某一种扩展名的汇总。"""
 
     ext: str
     count: int
@@ -65,7 +44,6 @@ class ExtStat:
 
 @dataclass(frozen=True)
 class Report:
-    """扫描报告：给"人"之前最后一步的纯数据形态。"""
 
     file_count: int
     total_size: int
@@ -83,7 +61,6 @@ def summarize(
     top: int = 8,
     largest_n: int = 5,
 ) -> Report:
-    """把一堆文件事实压成一份报告。"""
     total_size = 0
     buckets: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # ext -> [个数, 字节数]
 
@@ -115,7 +92,6 @@ def summarize(
 
 @dataclass(frozen=True)
 class DirStat:
-    """一个目录（或"直接放在 root 下的那堆文件"）的汇总。"""
 
     key: str  # 相对 root 的目录路径；空字符串 "" 表示 root 直属的文件
     total_size: int
@@ -125,13 +101,6 @@ class DirStat:
 def child_totals(
     dir_totals: Mapping[str, tuple[int, int]], root: Path
 ) -> tuple[DirStat, ...]:
-    """按"下一层目录"聚合，用扫描时记下的每目录直属合计。
-
-    遍历的是目录（数量约为文件的十分之一），不是文件。
-
-    输入是 {目录路径字符串: (直属字节, 直属文件数)}，输出是 root 下面
-    **每一层**的合计（含子孙）。
-    """
     root_key = str(root)
     # root 是 "C:\\" 这种盘符根时，它自己就以分隔符结尾，不能再补一个
     prefix = root_key if root_key.endswith(os.sep) else root_key + os.sep
@@ -158,14 +127,6 @@ def child_totals(
 
 
 def build_dir_totals(files: Sequence[FileEntry]) -> dict[str, tuple[int, int]]:
-    """从文件列表反推"每目录直属合计"。
-
-    正常流程用不到它（`fs.scan` 已经顺手记好了）。它是给两种情况用的：
-    手上只有文件列表的场景，以及测试 —— 造数据时不必真的跑一遍扫盘。
-
-    注意它是**慢路径**：每个文件都要做一次 Path 运算。
-    热路径上别调它。
-    """
     totals: dict[str, list[int]] = {}
     for f in files:
         key = str(f.path.parent)
@@ -183,15 +144,6 @@ def dir_sizes(
     *,
     depth: int = 1,
 ) -> tuple[DirStat, ...]:
-    """按目录聚合大小，从大到小排好。
-
-    depth=1 → 只看 root 的下一层（像资源管理器，但每一行带大小和占比）
-    depth=2 → 再往下一层
-
-    注意这个函数**完全不碰硬盘**：files 里已经有每个文件的大小和完整路径了，
-    这里只是把"路径前缀"当分组键重新加一遍。这就是分层的回报 ——
-    加一个新视图不需要重新扫盘。
-    """
     if depth < 1:
         raise ValueError("depth 至少是 1")
 
@@ -220,7 +172,6 @@ def dir_sizes(
 
 @dataclass(frozen=True)
 class DuplicateGroup:
-    """一组内容完全相同的文件。"""
 
     size: int  # 每个文件多大
     digest: str  # 全文 hash（为了让人能复核，也为了输出稳定）
@@ -228,7 +179,6 @@ class DuplicateGroup:
 
     @property
     def wasted(self) -> int:
-        """除了留一份，其余都是白占的空间。"""
         return self.size * (len(self.paths) - 1)
 
 
@@ -240,22 +190,6 @@ def find_duplicates(
     head_size: int = 4096,
     min_size: int = 1,
 ) -> tuple[DuplicateGroup, ...]:
-    """找出内容完全相同的文件。分三层筛，从便宜到贵。
-
-    **为什么不能直接对每个文件算 hash**：20 万个文件各算一次 SHA-256，
-    要读几百 GB、跑几十分钟。而九成九的文件根本不需要读。
-
-    第一层 · 按大小分组
-        大小不同 → 内容必然不同。只看元数据，不用读一个字节，就能排除绝大多数。
-    第二层 · 比前 head_size 字节
-        同样大小的文件其实很多（两个 1 KB 的配置文件、两个 100 MB 但内容不同的视频）。
-        读 4 KB 就能把绝大多数分开，代价极小。
-    第三层 · 全文 hash
-        只剩极少数候选，这时候读全文才划算。
-
-    **注意这个函数不认识硬盘。** 「怎么读文件头」「怎么算 hash」是作为参数传进来的。
-    这样测试里可以传两个假的函数，一行真实文件都不用造 —— 而它仍然是纯逻辑。
-    """
     # ── 第一层：按大小分组，只留下"同大小且至少两个"的
     by_size: dict[int, list[FileEntry]] = defaultdict(list)
     for f in files:
@@ -307,7 +241,6 @@ def find_duplicates(
 
 @dataclass(frozen=True)
 class AppMatch:
-    """「这个路径属于哪个应用」的结论，以及为什么这么判。"""
 
     app: AppRecord
     location: AppLocation
@@ -315,15 +248,6 @@ class AppMatch:
 
 
 def match_app(path: Path, apps: Sequence[AppRecord]) -> AppMatch | None:
-    """给一个路径，猜它属于哪个已登记的应用。
-
-    规则：看哪个应用的某个线索目录是它的祖先。**取最长的那一个**——
-    因为 `C:\\Program Files` 和 `C:\\Program Files\\Git` 都是 `git.exe` 的祖先，
-    但后者显然更准确。
-
-    返回 None 就是"不知道"。这是正常的、也是诚实的结果：绿色软件、
-    通过游戏平台装的游戏、很多现代应用根本不往注册表写路径。
-    """
     best: AppMatch | None = None
     best_depth = -1
 
@@ -342,14 +266,6 @@ def match_app(path: Path, apps: Sequence[AppRecord]) -> AppMatch | None:
 
 
 def distinct_locations(app: AppRecord, chosen: AppLocation) -> tuple[AppLocation, ...]:
-    """同一个应用登记的多条线索里，哪些算"另外的位置"。
-
-    落在已匹配目录**内部**的不算 —— 那大概率只是安装目录里的某个子文件夹
-    （Git 的图标在 `ucrt64\\share\\git` 里），列出来只会让人困惑。
-
-    父目录要保留：`C:\\Program Files\\obs-studio` 相对于 `...\\bin\\64bit`
-    是有用信息，它告诉你这个应用的根在哪。
-    """
     return tuple(
         location
         for location in app.locations

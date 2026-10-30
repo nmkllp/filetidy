@@ -1,12 +1,3 @@
-"""外部世界层：真的去碰硬盘。
-
-这一层的唯一任务，是把"混乱的真实世界"翻译成 models 里那些干净的、简单的数据。
-它不做判断、不算账、不打印 —— 那是 core 和 cli 的事。
-
-为什么值得单独分出来？因为硬盘是会出错的（没权限、文件被删、路径太长），
-把"会出错的地方"关在一个文件里，别的地方就能放心写成干净的直线逻辑。
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -19,11 +10,7 @@ from .models import FileEntry, RawScan, ScanProgress
 
 
 class ScanCancelled(Exception):
-    """扫描被调用方主动叫停了。
-
-    故意用异常而不是返回"半个结果"：半张报告的数字看着像真的，
-    但百分比、合计全是错的。与其给一个不可信的答案，不如明确说"这次没扫完"。
-    """
+    pass
 
 
 def scan(
@@ -35,16 +22,6 @@ def scan(
     progress_every: int = 500,
     cancel: Callable[[], bool] | None = None,
 ) -> RawScan:
-    """遍历 root 下的所有文件，返回事实 + 跳过计数 + 忽略计数。
-
-    - 不跟随符号链接 / 目录联接（否则可能绕进无限循环，或者把同一个文件数两遍）
-    - 遇到没权限的东西就跳过，但记在 skipped 里
-    - 命中忽略规则的目录**根本不进去**，记在 ignored_dirs 里
-    - 传了 progress 的话，每扫 progress_every 个文件回调一次
-
-    用 os.scandir 递归，而不是 os.walk：列目录时文件属性已经带回来了，
-    再 os.stat 查一遍是多余的。
-    """
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(f"路径不存在: {root}")
@@ -140,17 +117,11 @@ def scan(
 
 
 def read_head(path: Path, n: int) -> bytes:
-    """读出文件开头的 n 个字节。给"便宜的第二层比对"用。"""
     with open(path, "rb") as handle:
         return handle.read(n)
 
 
 def sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:
-    """算出文件的 SHA-256。
-
-    分块读，不一次性 read() 整个文件。理由很实际：用户可能有 7 GB 的压缩包，
-    一次性读进内存会把机器拖死。一块 1 MB，读多少算多少，内存占用恒定。
-    """
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         while chunk := handle.read(chunk_size):

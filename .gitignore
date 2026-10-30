@@ -6,15 +6,13 @@ __pycache__/
 .venv/
 venv/
 
-# 测试与构建产物
-.pytest_cache/
-.tmp-tests/
-*.egg-info/
+# 构建产物
 build/
 dist/
+*.egg-info/
 
-# 样本数据是生成出来的，不提交（生成脚本在 tools/make_sample.py）
-samples/
+# 测试临时目录（里面的子目录权限被锁死，删不掉，别让 git 去扫）
+.tmp-tests/
 
 # 开发时给界面截的图，随手产物，不进仓库
 _shot_*.png

@@ -1,9 +1,3 @@
-"""界面层：命令行参数进、人看得懂的字出。
-
-这一层负责所有"和外界打交道"的脏活：解析参数、格式化、决定退出码。
-它不做业务计算 —— 算账在 core，碰盘在 fs。
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -28,7 +22,6 @@ from .models import AppRecord, RawScan, ScanProgress
 
 
 def human_size(n: int) -> str:
-    """1536 -> '1.5 KB'。人读字节数需要翻译。"""
     if n < 0:
         raise ValueError("大小不能是负数")
     units = ("B", "KB", "MB", "GB", "TB", "PB")
@@ -43,7 +36,6 @@ def human_size(n: int) -> str:
 
 
 def _width(text: str) -> int:
-    """中文在终端里占两格，len() 只算一格，直接对齐会歪。"""
     return sum(2 if east_asian_width(ch) in "WF" else 1 for ch in text)
 
 
@@ -52,7 +44,6 @@ def _pad(text: str, width: int) -> str:
 
 
 def render(report: Report, root: Path) -> str:
-    """把报告变成一段文字。纯函数 —— 不打印，只返回字符串（好测）。"""
     lines = [
         f"扫描目录: {root}",
         f"文件数: {report.file_count}    总大小: {human_size(report.total_size)}",
@@ -90,18 +81,11 @@ def render(report: Report, root: Path) -> str:
 
 
 def _bar(fraction: float, width: int = 12) -> str:
-    """把 0~1 的比例画成一条横条。
-
-    这是本工具唯一的"可视化"：它把"占了多少"这个数字编码成"占了多长"，
-    所以眼睛不用读百分比就知道大小关系。记住这条 ——
-    可视化有用的前提是它承载了一个数字，不是它好看。
-    """
     filled = int(round(max(0.0, min(1.0, fraction)) * width))
     return "█" * filled + "░" * (width - filled)
 
 
 def render_dirs(stats: tuple[DirStat, ...], raw: RawScan, *, top: int) -> str:
-    """把目录聚合结果变成文字。纯函数，不打印。"""
     total = sum(stat.total_size for stat in stats)
     file_count = sum(stat.file_count for stat in stats)
 
@@ -141,7 +125,6 @@ def render_dirs(stats: tuple[DirStat, ...], raw: RawScan, *, top: int) -> str:
 
 
 def _relative(path: Path, root: Path) -> str:
-    """尽量显示相对路径 —— 绝对路径一长，人眼就没法比对了。"""
     try:
         return str(path.relative_to(root))
     except ValueError:
@@ -151,7 +134,6 @@ def _relative(path: Path, root: Path) -> str:
 def render_dups(
     groups: tuple[DuplicateGroup, ...], raw: RawScan, *, top: int, min_size: int
 ) -> str:
-    """把重复分组变成文字。纯函数，不打印。"""
     lines = [
         f"扫描目录: {raw.root}",
         f"文件数: {len(raw.files)}    最小判定大小: {human_size(min_size)}",
@@ -193,7 +175,6 @@ def render_dups(
 
 
 def _add_path_options(parser: argparse.ArgumentParser) -> None:
-    """各个命令共用的那几个参数，抽出来避免抄两遍抄歪。"""
     parser.add_argument("path", nargs="?", default=".", help="要扫描的目录（默认: 当前目录）")
     parser.add_argument(
         "--exclude",
@@ -215,12 +196,6 @@ def _add_path_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _progress_reporter():
-    """返回一个往 stderr 打进度行的回调。
-
-    用 \\r 回到行首覆盖，所以屏幕上永远只有一行，不会刷出一屏垃圾。
-    写到 stderr 而不是 stdout：这样 `tidy scan . > report.txt` 时，
-    进度不会污染报告内容。
-    """
 
     def report(point: ScanProgress) -> None:
         print(
@@ -234,7 +209,6 @@ def _progress_reporter():
 
 
 def _scan_from_args(args: argparse.Namespace) -> RawScan | None:
-    """三个扫描类命令共用的那一段：跑扫描、处理错误、收尾进度行。"""
     progress = _progress_reporter() if getattr(args, "progress", False) else None
     try:
         raw = scan(
@@ -305,7 +279,6 @@ def build_parser() -> argparse.ArgumentParser:
 def render_who(
     target: Path, match: AppMatch | None, apps: tuple[AppRecord, ...]
 ) -> str:
-    """把"这个路径属于谁"变成文字。纯函数，不打印。"""
     lines = [f"目标: {target}", ""]
 
     if match is None:
@@ -433,7 +406,6 @@ def _cmd_gui(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """返回退出码：0 成功，1 运行错误，2 用法错误。"""
     args = build_parser().parse_args(argv)
 
     if args.command == "scan":

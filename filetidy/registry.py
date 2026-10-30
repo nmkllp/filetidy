@@ -1,13 +1,3 @@
-"""Windows 注册表读取：找出「这台机器上装了什么，装在哪」。
-
-这是第二个"外部世界"的入口，和 fs.py 平级。分开的理由很实在：
-注册表是 Windows 独有的，而 fs.py 里的东西（os.scandir 之类）在哪都能跑。
-如果混在一起，Linux 上连 import 都会失败，测试和 CI 全废。
-
-所以原则是：**`import winreg` 只能出现在函数里面**，不能出现在模块顶层。
-这样这个文件在所有平台上都能被 import，只有真的去读注册表时才会报错。
-"""
-
 from __future__ import annotations
 
 import os
@@ -35,7 +25,6 @@ _FILE_EXTS: tuple[str, ...] = (".exe", ".ico", ".dll")
 
 
 def is_supported() -> bool:
-    """这台机器上能不能读注册表。"""
     try:
         import winreg  # noqa: F401
     except ImportError:
@@ -44,14 +33,6 @@ def is_supported() -> bool:
 
 
 def _broad_roots() -> tuple[str, ...]:
-    """"公共根目录"清单：这些路径本身不能用来判断"子目录属于谁"。
-
-    有些程序把 InstallLocation 直接写成 `C:\\Program Files`。如果把它当证据，
-    Program Files 下**每一个**目录都会被判成"属于那个程序"——100% 的命中率，
-    也 100% 是错的。假阳性比"认不出"更有害：用户会照着错误的结论去删东西。
-
-    返回的是规范化后的小写字符串，方便直接比较。
-    """
     env = os.environ
     raw = [
         env.get("ProgramFiles"),
@@ -68,29 +49,12 @@ def _broad_roots() -> tuple[str, ...]:
 
 
 def _is_too_broad(path: Path) -> bool:
-    """这条线索是不是宽到没有信息量。"""
     if len(path.parts) <= 1:  # 盘符根，比如 C:\
         return True
     return os.path.normcase(str(path)) in _broad_roots()
 
 
 def _extract_dir(value: str) -> Path | None:
-    """从 DisplayIcon / UninstallString 里抠出"安装目录"。
-
-    这些值不是干净的路径，长这样：
-
-        "C:\\Program Files\\Git\\git.ico",0
-        "C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe"
-        "C:\\Program Files\\X\\uninst.exe" /S
-        MsiExec.exe /X{6219E6AE-...}
-
-    规则：
-      - 有引号就取引号里的内容，并去掉 ",0" 这种图标序号后缀
-      - 没引号就切到第一个 .exe / .ico / .dll 为止（**不能按空格切**：
-        `C:\\Program Files\\Maxon Cinema 4D R22` 这种目录名里带空格，
-        按空格切会变成 `C:\\Program`）
-      - 抠不出以盘符开头的绝对路径，就返回 None（比如 MsiExec 那种）
-    """
     text = value.strip()
     if not text:
         return None
@@ -127,7 +91,6 @@ def _extract_dir(value: str) -> Path | None:
 
 
 def _value(key, name: str) -> str:
-    """读一个字符串值，读不到就给空串（注册表里缺项是常态，不是异常）。"""
     import winreg
 
     try:
@@ -138,7 +101,6 @@ def _value(key, name: str) -> str:
 
 
 def _locations_from(install_location: str, icon: str, uninstall: str) -> tuple[AppLocation, ...]:
-    """把三条原始线索变成去重后的位置列表，顺序按可信度排。"""
     found: list[AppLocation] = []
     seen: set[str] = set()
 
@@ -162,10 +124,6 @@ def _locations_from(install_location: str, icon: str, uninstall: str) -> tuple[A
 
 
 def list_apps() -> tuple[AppRecord, ...]:
-    """读出所有登记过的程序。读不到的条目直接跳过，不抛异常。
-
-    返回的顺序是稳定的（按名字排），这样输出不会每次都不一样。
-    """
     import winreg
 
     apps: list[AppRecord] = []

@@ -1,5 +1,3 @@
-"""让 `python -m filetidy scan .` 能用（不装包也能跑）。"""
-
 from __future__ import annotations
 
 import sys
