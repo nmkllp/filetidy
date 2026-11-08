@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import csv
+import io
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QSettings, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,12 +23,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
 from .cli import human_size  # 共用的格式化函数，cli 不反过来 import gui，没有环
 from .core import DirStat, child_totals
 from .fs import ScanCancelled, scan
 from .models import RawScan, ScanProgress
 
 RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+
+
+def render_csv(root: Path, stats: tuple[DirStat, ...]) -> str:
+    total = sum(stat.total_size for stat in stats)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["名称", "大小(字节)", "大小", "占比", "文件数"])
+    for stat in stats:
+        name = stat.key or "(直接放在此目录的文件)"
+        percent = (stat.total_size / total * 100) if total else 0.0
+        writer.writerow(
+            [name, stat.total_size, human_size(stat.total_size), f"{percent:.1f}%", stat.file_count]
+        )
+    return buf.getvalue()
 
 
 class ScanWorker(QThread):
@@ -67,7 +84,7 @@ class ScanWorker(QThread):
 class MainWindow(QWidget):
     def __init__(self, start_path: str = ".") -> None:
         super().__init__()
-        self.setWindowTitle("filetidy · 看看空间去哪了")
+        self.setWindowTitle(f"filetidy {__version__} · 看看空间去哪了")
         self.resize(920, 640)
 
         self._worker: ScanWorker | None = None
@@ -76,9 +93,17 @@ class MainWindow(QWidget):
         self._stats: tuple[DirStat, ...] = ()  # 当前这一层的完整统计（过滤前）
         self._skipped = 0
         self._ignored = 0
+        self._settings = QSettings("nmkllp", "filetidy")
 
         self._build_ui()
-        self.path_edit.setText(str(start_path))
+        self.path_edit.setText(self._initial_path(start_path))
+
+    def _initial_path(self, fallback: str) -> str:
+        """上次扫过的目录。没有记录（或目录已经不在了）就用主目录。"""
+        remembered = self._settings.value("last_dir", "", type=str)
+        if remembered and Path(remembered).is_dir():
+            return remembered
+        return str(fallback)
 
     # ── 界面搭建 ──────────────────────────────────────────────
 
@@ -90,12 +115,15 @@ class MainWindow(QWidget):
         self.scan_btn.setDefault(True)
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.setVisible(False)  # 只在扫描时出现，平时不占地方
+        self.export_btn = QPushButton("导出…")
+        self.export_btn.setEnabled(False)
 
         top = QHBoxLayout()
         top.addWidget(self.path_edit, 1)
         top.addWidget(self.browse_btn)
         top.addWidget(self.scan_btn)
         top.addWidget(self.cancel_btn)
+        top.addWidget(self.export_btn)
 
         self.up_btn = QPushButton("↑ 上一级")
         self.up_btn.setEnabled(False)
@@ -156,6 +184,7 @@ class MainWindow(QWidget):
         self.browse_btn.clicked.connect(self._choose_dir)
         self.scan_btn.clicked.connect(self.start_scan)
         self.cancel_btn.clicked.connect(self.cancel_scan)
+        self.export_btn.clicked.connect(self.export_current_view)
         self.path_edit.returnPressed.connect(self.start_scan)
         self.up_btn.clicked.connect(self.go_up)
         self.tree.itemActivated.connect(self._on_item_activated)
@@ -183,6 +212,8 @@ class MainWindow(QWidget):
             self.status.setText(f"这不是一个目录: {target}")
             return
 
+        self._settings.setValue("last_dir", str(target))  # 下次打开直接站在这儿
+        self.export_btn.setEnabled(False)
         self.tree.clear()
         self._raw = None
         self._root = None
@@ -272,7 +303,24 @@ class MainWindow(QWidget):
         self._stats = stats
         self._skipped = skipped
         self._ignored = ignored
+        self.export_btn.setEnabled(bool(stats))
         self._fill_tree()
+
+    def export_current_view(self) -> None:
+        """把当前这一层导出成 CSV。"""
+        if self._root is None or not self._stats:
+            return
+
+        suggested = Path.home() / f"{self._root.name or 'scan'}.csv"
+        target, _ = QFileDialog.getSaveFileName(
+            self, "导出当前这一层", str(suggested), "CSV 文件 (*.csv)"
+        )
+        if not target:
+            return
+
+        # utf-8-sig 会带 BOM，Excel 打开中文才不会乱码
+        Path(target).write_text(render_csv(self._root, self._stats), encoding="utf-8-sig")
+        self.status.setText(f"已导出：{target}")
 
     def _on_filter_changed(self, _text: str) -> None:
         self._fill_tree()

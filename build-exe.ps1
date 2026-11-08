@@ -105,7 +105,42 @@ if ($OneFile) {
             Remove-Item $f -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host ("==> 清掉 {0:N1} MB 用不到的 Qt 组件" -f ($freed / 1MB)) -ForegroundColor Cyan
+
+    # OpenSSL：Qt 带进来的，程序不发任何网络请求
+    foreach ($name in "libcrypto-3.dll", "libssl-3.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll") {
+        $f = Join-Path "dist\filetidy\_internal" $name
+        if (Test-Path $f) {
+            $freed += (Get-Item $f).Length
+            Remove-Item $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Qt 翻译：只留中文和英文，另外 97 种语言用不上
+    $tr = "dist\filetidy\_internal\PySide6\translations"
+    if (Test-Path $tr) {
+        Get-ChildItem $tr -File -Filter *.qm | Where-Object { $_.Name -notmatch "zh_CN|_en\.qm|^en\." } | ForEach-Object {
+            $freed += $_.Length
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 图片格式插件：界面上不显示图片
+    $imf = "dist\filetidy\_internal\PySide6\plugins\imageformats"
+    if (Test-Path $imf) {
+        $freed += (Get-ChildItem $imf -File | Measure-Object Length -Sum).Sum
+        Remove-Item $imf -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 平台插件只留 qwindows（Windows 上唯一用得着的）
+    $plat = "dist\filetidy\_internal\PySide6\plugins\platforms"
+    if (Test-Path $plat) {
+        Get-ChildItem $plat -File | Where-Object { $_.Name -ne "qwindows.dll" } | ForEach-Object {
+            $freed += $_.Length
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Write-Host ("==> 清掉 {0:N1} MB 用不到的组件" -f ($freed / 1MB)) -ForegroundColor Cyan
 
     $zip = Join-Path "dist" "filetidy-win64.zip"
     Write-Host "==> 正在压缩成 zip" -ForegroundColor Cyan
