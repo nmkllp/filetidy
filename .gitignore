@@ -17,9 +17,6 @@ dist/
 # 开发时给界面截的图，随手产物，不进仓库
 _shot_*.png
 
-# 本地草稿与旧文档备份，不进仓库
-_backup/
-
 # 双击启动器 / exe 失败时写的日志
 filetidy-gui-error.log
 filetidy-error.log
