@@ -71,11 +71,12 @@ def render(report: Report, root: Path) -> str:
         )
 
     lines.append("")
-    lines.append("最大的文件:")
+    lines.append("最大的文件（右侧是它所在的文件夹）:")
     if not report.largest:
         lines.append("  (无)")
     for f in report.largest:
-        lines.append(f"  {human_size(f.size):>9}  {f.path}")
+        parent = f.path.parent.name or str(f.path.parent)
+        lines.append(f"  {human_size(f.size):>9}  {f.path.name:<28}  {parent}")
 
     return "\n".join(lines)
 
