@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import AppLocation, AppRecord, FileEntry
+from .models import AppLocation, AppRecord, FileEntry, ScanCancelled
 
 
 # 默认忽略的目录名。挑的都是"里面全是机器生成的东西、人不会去清理"的目录。
@@ -177,6 +177,8 @@ def find_duplicates(
     read_hash: Callable[[Path], str],
     head_size: int = 4096,
     min_size: int = 1,
+    cancel: Callable[[], bool] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[DuplicateGroup, ...]:
     # ── 第一层：按大小分组，只留下"同大小且至少两个"的
     by_size: dict[int, list[FileEntry]] = defaultdict(list)
@@ -188,17 +190,21 @@ def find_duplicates(
     if not size_dupes:
         return ()
 
+    # 真正要读文件去比对的候选，进度条按它算
+    candidates = [f for group in size_dupes for f in group]
+
     # ── 第二层：同大小的一组里，再按"开头 N 字节"分组
     by_head: dict[tuple[int, bytes], list[FileEntry]] = defaultdict(list)
-    for group in size_dupes:
-        for f in group:
-            try:
-                head = read_head(f.path, head_size)
-            except OSError:
-                # 读不了就跳过。文件可能刚被删、或者没权限。
-                # 宁可少报一组，也不能让整次扫描崩掉。
-                continue
-            by_head[(f.size, head)].append(f)
+    for index, f in enumerate(candidates):
+        if cancel is not None and index % 200 == 0 and cancel():
+            raise ScanCancelled()
+        try:
+            head = read_head(f.path, head_size)
+        except OSError:
+            continue
+        by_head[(f.size, head)].append(f)
+        if progress is not None and index % 200 == 0:
+            progress(index + 1, len(candidates))
 
     # ── 第三层：只剩少数候选，才算全文 hash
     result: list[DuplicateGroup] = []
@@ -207,6 +213,8 @@ def find_duplicates(
             continue
         by_hash: dict[str, list[FileEntry]] = defaultdict(list)
         for f in group:
+            if cancel is not None and cancel():
+                raise ScanCancelled()
             try:
                 digest = read_hash(f.path)
             except OSError:

@@ -48,3 +48,10 @@ class AppRecord:
     publisher: str
     registry_key: str  # 完整路径，出问题时能让人去核对
     locations: tuple[AppLocation, ...]
+
+
+class ScanCancelled(Exception):
+    """扫描/查找被主动叫停。
+
+    放在 models 而不是 fs 里，是因为 core 里的 find_duplicates 也要用它，
+    而 core 不能 import fs（那就成环了）。"""

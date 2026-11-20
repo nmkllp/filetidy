@@ -6,11 +6,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .core import DEFAULT_IGNORED_DIRS, is_ignored
-from .models import FileEntry, RawScan, ScanProgress
-
-
-class ScanCancelled(Exception):
-    pass
+from .models import FileEntry, RawScan, ScanCancelled, ScanProgress
 
 
 def scan(
@@ -56,7 +52,12 @@ def scan(
             # scandir 把这个目录里所有条目的名字和属性一次性带回来。
             # with 是为了及时关掉底层的目录句柄 —— 忘了它在大目录树上会耗尽句柄。
             with os.scandir(current) as entries:
+                checked = 0
                 for entry in entries:
+                    # 单个目录里也可能有几万个文件，不能只在目录之间检查取消
+                    checked += 1
+                    if checked % 200 == 0 and cancel is not None and cancel():
+                        raise ScanCancelled()
                     try:
                         # follow_symlinks=False 全部走属性缓存，不再碰磁盘
                         if entry.is_dir(follow_symlinks=False):

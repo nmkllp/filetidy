@@ -85,22 +85,38 @@ class ScanWorker(QThread):
 class DupWorker(QThread):
     """在后台线程里找重复文件。读文件算 hash 可能慢，不能放主线程。"""
 
+    progressed = Signal(int, int)  # 已比较, 候选总数
     done = Signal(object)  # tuple[DuplicateGroup, ...]
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(self, files, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._files = files
+        self._stop = False
+
+    def cancel(self) -> None:
+        self._stop = True
 
     def run(self) -> None:
         try:
             groups = find_duplicates(
-                self._files, read_head=read_head, read_hash=sha256_file
+                self._files,
+                read_head=read_head,
+                read_hash=sha256_file,
+                cancel=lambda: self._stop,
+                progress=self._report,
             )
+        except ScanCancelled:
+            self.cancelled.emit()
+            return
         except OSError as exc:
             self.failed.emit(str(exc))
             return
         self.done.emit(groups)
+
+    def _report(self, done: int, total: int) -> None:
+        self.progressed.emit(done, total)
 
 
 class MainWindow(QWidget):
@@ -116,8 +132,6 @@ class MainWindow(QWidget):
         self._stats: tuple[DirStat, ...] = ()  # 当前这一层的完整统计（过滤前）
         self._skipped = 0
         self._ignored = 0
-        self._dup_groups: tuple[DuplicateGroup, ...] = ()
-        self._populating_dups = False  # 填表时别触发 itemChanged 的重复计算
         self._settings = QSettings("nmkllp", "filetidy")
 
         self._build_ui()
@@ -203,7 +217,7 @@ class MainWindow(QWidget):
 
         self.dup_tree = QTreeWidget()
         self.dup_tree.setColumnCount(3)
-        self.dup_tree.setHeaderLabels(["文件（勾选 = 标记为可删）", "大小", "所在文件夹"])
+        self.dup_tree.setHeaderLabels(["文件", "大小", "所在文件夹"])
         self.dup_tree.setAlternatingRowColors(True)
         self.dup_tree.setUniformRowHeights(True)
         dh = self.dup_tree.header()
@@ -233,7 +247,6 @@ class MainWindow(QWidget):
         self.up_btn.clicked.connect(self.go_up)
         self.tree.itemActivated.connect(self._on_item_activated)
         self.search_edit.textChanged.connect(self._on_filter_changed)
-        self.dup_tree.itemChanged.connect(self._update_dup_summary)
 
         # 右键菜单：看一眼之后下一步通常是"去资源管理器里打开它"
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -262,7 +275,6 @@ class MainWindow(QWidget):
         self.dup_btn.setEnabled(False)
         self.tree.clear()
         self.dup_tree.clear()
-        self._dup_groups = ()
         self._raw = None
         self._root = None
         self._set_busy(True)
@@ -277,9 +289,14 @@ class MainWindow(QWidget):
         self._worker.start()
 
     def cancel_scan(self) -> None:
+        # 取消按钮同时管扫描和查重复，谁在跑就停谁
         if self._worker is not None:
             self._worker.cancel()
-            self.status.setText("正在停止…")
+        elif self._dup_worker is not None:
+            self._dup_worker.cancel()
+        else:
+            return
+        self.status.setText("正在停止…")
 
     def _set_busy(self, busy: bool) -> None:
         self.scan_btn.setEnabled(not busy)
@@ -295,11 +312,12 @@ class MainWindow(QWidget):
         self.status.setText(f"出错了: {message}")
 
     def _on_cancelled(self) -> None:
-        self.status.setText("已取消 —— 这次扫描不完整，数字不可信")
+        self.status.setText("已取消 —— 结果不完整，数字不可信")
 
     def _on_finished(self) -> None:
         self._set_busy(False)
         self._worker = None
+        self._dup_worker = None
 
     def _on_scanned(self, raw: RawScan) -> None:
         self._raw = raw
@@ -313,56 +331,40 @@ class MainWindow(QWidget):
         if self._raw is None:
             self.status.setText("先扫描一个目录，再查重复")
             return
-        # 查重复暂时不支持取消，所以别把「取消」按钮亮出来误导人
-        self.scan_btn.setEnabled(False)
-        self.browse_btn.setEnabled(False)
-        self.dup_btn.setEnabled(False)
-        self.progress.setVisible(True)
+        self._set_busy(True)
         self.status.setText("正在查找重复文件…")
         self._dup_worker = DupWorker(self._raw.files, parent=self)
+        self._dup_worker.progressed.connect(self._on_dup_progress)
         self._dup_worker.done.connect(self._on_dup_ready)
         self._dup_worker.failed.connect(self._on_failed)
+        self._dup_worker.cancelled.connect(self._on_cancelled)
         self._dup_worker.finished.connect(self._on_finished)
         self._dup_worker.start()
 
+    def _on_dup_progress(self, done: int, total: int) -> None:
+        self.status.setText(f"正在查找重复… 已比较 {done:,} / {total:,} 个文件")
+
     def _on_dup_ready(self, groups: tuple[DuplicateGroup, ...]) -> None:
-        self._dup_groups = groups
-        self._populating_dups = True
         self.dup_tree.clear()
         for group in groups:
             top = QTreeWidgetItem(
-                [f"{human_size(group.size)} × {len(group.paths)} 份，可省 {human_size(group.wasted)}", "", ""]
+                [f"{human_size(group.size)} × {len(group.paths)} 份", human_size(group.size), ""]
             )
-            top.setFlags(top.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-            for index, path in enumerate(group.paths):
+            for path in group.paths:
                 child = QTreeWidgetItem([path.name, human_size(group.size), path.parent.name])
-                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                # 默认勾掉"多余的那几份"，留第一份不动
-                child.setCheckState(0, Qt.CheckState.Checked if index > 0 else Qt.CheckState.Unchecked)
-                child.setData(1, Qt.ItemDataRole.UserRole, group.size)
                 child.setData(0, Qt.ItemDataRole.UserRole, str(path))
                 top.addChild(child)
             self.dup_tree.addTopLevelItem(top)
-        self._populating_dups = False
         self.dup_tree.expandAll()
         self.tabs.setCurrentIndex(1)
-        self._update_dup_summary()
         if not groups:
-            self.status.setText("没有找到重复文件")
-
-    def _update_dup_summary(self, *_args) -> None:
-        if self._populating_dups or not self._dup_groups:
-            return
-        marked = 0
-        freed = 0
-        for i in range(self.dup_tree.topLevelItemCount()):
-            top = self.dup_tree.topLevelItem(i)
-            for j in range(top.childCount()):
-                child = top.child(j)
-                if child.checkState(0) == Qt.CheckState.Checked:
-                    marked += 1
-                    freed += child.data(1, Qt.ItemDataRole.UserRole)
-        self.status.setText(f"标记了 {marked} 个文件，可释放 {human_size(freed)} —— 还没有删除功能")
+            self.status.setText("无重复文件")
+        else:
+            wasted = sum(g.wasted for g in groups)
+            files = sum(len(g.paths) for g in groups)
+            self.status.setText(
+                f"共 {len(groups)} 组重复，涉及 {files} 个文件，多余占用 {human_size(wasted)}"
+            )
 
     # ── 进入 / 返回 ───────────────────────────────────────────
 
